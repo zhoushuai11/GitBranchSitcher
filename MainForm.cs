@@ -70,6 +70,7 @@ namespace GitBranchSwitcher
 
         public MainForm() {
             _settings = AppSettings.Load();
+            TrySetRuntimeIcon(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "AppIcon.jpg"));
             InitializeComponent();
             InitUi();
             LoadStateImagesRandom(); // 默认进入随机一张“未切线”
@@ -914,5 +915,18 @@ namespace GitBranchSwitcher
 
             return bmp;
         }
+
+        private void TrySetRuntimeIcon(string jpgPath)
+        {
+            try
+            {
+                if (!System.IO.File.Exists(jpgPath)) return;
+                using var bmp = new System.Drawing.Bitmap(jpgPath);
+                IntPtr hIcon = bmp.GetHicon();
+                this.Icon = System.Drawing.Icon.FromHandle(hIcon);
+            }
+            catch { /* ignore */ }
+        }
     }
+
 }
