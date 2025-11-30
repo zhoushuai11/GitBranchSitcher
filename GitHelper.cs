@@ -181,16 +181,14 @@ namespace GitBranchSwitcher
             return (true, log.AppendLine($"OK").ToString());
         }
 
-        // ==================== 仓库瘦身 (GC) 逻辑 ====================
-        // [修改] 返回值增加了 long bytesSaved
-        public static (bool ok, string log, string sizeInfo, long bytesSaved) GarbageCollect(string repoPath, bool aggressive)
+public static (bool ok, string log, string sizeInfo, long bytesSaved) GarbageCollect(string repoPath, bool aggressive)
         {
             var log = new StringBuilder();
             void Step(string s) => log.AppendLine(s);
 
             string gitDir = Path.Combine(repoPath, ".git");
             long sizeBefore = GetDirectorySize(gitDir);
-            Step($"初始大小: {FormatSize(sizeBefore)}");
+            Step($"初始大小: {FormatSize(sizeBefore)}"); // 使用新格式
 
             Step("> Prune remote origin...");
             RunGit(repoPath, "remote prune origin", 60_000);
@@ -204,7 +202,6 @@ namespace GitBranchSwitcher
                 args = "gc --prune=now";
             }
 
-            // [关键] 无限等待 (-1)，防止大仓库中途被杀
             var (code, stdout, stderr) = RunGit(repoPath, args, -1);
 
             if (code != 0) 
@@ -220,6 +217,31 @@ namespace GitBranchSwitcher
             return (true, log.ToString(), FormatSize(saved), saved);
         }
 
+        private static long GetDirectorySize(string path) { try { if (!Directory.Exists(path)) return 0; return new DirectoryInfo(path).EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length); } catch { return 0; } }
+
+        // [修改] 递进式格式化：1GB 200MB 50KB
+        private static string FormatSize(long bytes)
+        {
+            if (bytes <= 0) return "0B";
+            if (bytes < 1024) return $"{bytes}B";
+
+            long gb = bytes / (1024 * 1024 * 1024);
+            long rem = bytes % (1024 * 1024 * 1024);
+            long mb = rem / (1024 * 1024);
+            rem = rem % (1024 * 1024);
+            long kb = rem / 1024;
+
+            var sb = new StringBuilder();
+            if (gb > 0) sb.Append($"{gb}GB ");
+            if (mb > 0) sb.Append($"{mb}MB ");
+            if (kb > 0) sb.Append($"{kb}KB");
+            
+            // 如果正好是 0KB (比如被整除)，但有 GB/MB，就不用显示 KB 了
+            // 如果连 KB 都没有 (比如 500B)，上面第一行已经处理了
+            
+            return sb.ToString().Trim();
+        }
+
         // ==================== 修复逻辑 ====================
 
         public static (bool ok, string log) RepairRepo(string repoPath)
@@ -231,19 +253,6 @@ namespace GitBranchSwitcher
             foreach (var f in locks) { try { File.Delete(f); log.AppendLine($"Deleted {Path.GetFileName(f)}"); } catch { } }
             var r = RunGit(repoPath, "fsck --full --no-progress", -1);
             return (true, log.ToString() + "\n" + (r.code == 0 ? "Healthy" : r.stdout + r.stderr));
-        }
-
-        // ==================== 底层工具 ====================
-
-        private static long GetDirectorySize(string path)
-        {
-            try { if (!Directory.Exists(path)) return 0; return new DirectoryInfo(path).EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length); } catch { return 0; }
-        }
-        private static string FormatSize(long bytes)
-        {
-            string[] suffixes = { "B", "KB", "MB", "GB", "TB" }; int counter = 0; decimal number = (decimal)bytes;
-            while (Math.Round(number / 1024) >= 1) { number = number / 1024; counter++; }
-            return string.Format("{0:n1}{1}", number, suffixes[counter]);
         }
 
         public static (int code, string stdout, string stderr) RunGit(string workingDir, string args, int timeoutMs = 120000)
