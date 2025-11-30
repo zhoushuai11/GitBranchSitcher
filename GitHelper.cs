@@ -53,6 +53,13 @@ namespace GitBranchSwitcher
             return set;
         }
 
+        // [新增] 快速 Fetch 方法，用于后台更新分支列表
+        public static void FetchFast(string repoPath)
+        {
+            // 15秒超时，只拉取不带 tags，尽可能快
+            RunGit(repoPath, "fetch origin --prune --no-tags", 15000);
+        }
+
         private static bool HasLocalChanges(string repoPath)
         {
             var (code, stdout, _) = RunGit(repoPath, "status --porcelain", 15000);
@@ -125,17 +132,17 @@ namespace GitBranchSwitcher
                 if (c2 != 0) return (false, log.AppendLine($"创建分支失败: {e2}").ToString());
             }
 
-            // 4. 同步远程代码 (Pull / Reset) - [本次核心修复位置]
+            // 4. 同步远程代码 (Pull / Reset)
             if (!fastMode)
             {
-                // 检查远程分支是否存在 (防止本地有分支但远程没有的情况报错)
+                // 检查远程分支是否存在
                 bool remoteTrackingExists = RunGit(repoPath, $"show-ref --verify --quiet refs/remotes/origin/{targetBranch}", 20_000).code == 0;
 
                 if (remoteTrackingExists)
                 {
                     if (!useStash)
                     {
-                        // [Force Mode]: 强制 Reset 到远程状态，丢弃本地所有未推送的 Commits
+                        // [Force Mode]: 强制 Reset 到远程状态
                         Step($"> [强制模式] Reset to origin/{targetBranch}...");
                         var (cr, sr, er) = RunGit(repoPath, $"reset --hard origin/{targetBranch}", 60_000);
                         if (cr != 0) return (false, log.AppendLine($"❌ 强制同步失败: {er}").ToString());
@@ -148,7 +155,6 @@ namespace GitBranchSwitcher
                         
                         if (cm != 0)
                         {
-                            // 失败时明确报错，不强行合并
                             log.AppendLine($"❌ 同步失败: 本地分支与远程分叉，无法快进 (Diverged)。");
                             log.AppendLine($"原因: {em}");
                             if (stashed) log.AppendLine("⚠️ 提示: 您的工作区修改已 Stash，但代码拉取失败。");
@@ -181,14 +187,14 @@ namespace GitBranchSwitcher
             return (true, log.AppendLine($"OK").ToString());
         }
 
-public static (bool ok, string log, string sizeInfo, long bytesSaved) GarbageCollect(string repoPath, bool aggressive)
+        public static (bool ok, string log, string sizeInfo, long bytesSaved) GarbageCollect(string repoPath, bool aggressive)
         {
             var log = new StringBuilder();
             void Step(string s) => log.AppendLine(s);
 
             string gitDir = Path.Combine(repoPath, ".git");
             long sizeBefore = GetDirectorySize(gitDir);
-            Step($"初始大小: {FormatSize(sizeBefore)}"); // 使用新格式
+            Step($"初始大小: {FormatSize(sizeBefore)}"); 
 
             Step("> Prune remote origin...");
             RunGit(repoPath, "remote prune origin", 60_000);
@@ -219,26 +225,19 @@ public static (bool ok, string log, string sizeInfo, long bytesSaved) GarbageCol
 
         private static long GetDirectorySize(string path) { try { if (!Directory.Exists(path)) return 0; return new DirectoryInfo(path).EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length); } catch { return 0; } }
 
-        // [修改] 递进式格式化：1GB 200MB 50KB
         private static string FormatSize(long bytes)
         {
             if (bytes <= 0) return "0B";
             if (bytes < 1024) return $"{bytes}B";
-
             long gb = bytes / (1024 * 1024 * 1024);
             long rem = bytes % (1024 * 1024 * 1024);
             long mb = rem / (1024 * 1024);
             rem = rem % (1024 * 1024);
             long kb = rem / 1024;
-
             var sb = new StringBuilder();
             if (gb > 0) sb.Append($"{gb}GB ");
             if (mb > 0) sb.Append($"{mb}MB ");
             if (kb > 0) sb.Append($"{kb}KB");
-            
-            // 如果正好是 0KB (比如被整除)，但有 GB/MB，就不用显示 KB 了
-            // 如果连 KB 都没有 (比如 500B)，上面第一行已经处理了
-            
             return sb.ToString().Trim();
         }
 
@@ -302,8 +301,6 @@ public static (bool ok, string log, string sizeInfo, long bytesSaved) GarbageCol
                 if (IsGitRoot(rootPath))
                 {
                     repos.Add(rootPath);
-                    // 如果你的项目结构是嵌套的（仓库里套仓库），请注释掉下面这行
-                    // return repos; 
                 }
 
                 // 2. 递归子目录
@@ -311,7 +308,7 @@ public static (bool ok, string log, string sizeInfo, long bytesSaved) GarbageCol
                 foreach (var dir in subDirs)
                 {
                     var name = Path.GetFileName(dir);
-                    if (IsIgnoredFolder(name)) continue; // 仅跳过 .git 等系统目录
+                    if (IsIgnoredFolder(name)) continue; 
                     repos.AddRange(ScanForGitRepositories(dir));
                 }
             }
@@ -326,12 +323,10 @@ public static (bool ok, string log, string sizeInfo, long bytesSaved) GarbageCol
 
         private static bool IsIgnoredFolder(string name)
         {
-            // [修改] 仅跳过绝对不应该扫描的系统/元数据目录
-            // Library 和 Temp 现在会被扫描
             return name.Equals(".git", StringComparison.OrdinalIgnoreCase) ||
                    name.Equals(".vs", StringComparison.OrdinalIgnoreCase) ||
                    name.Equals(".idea", StringComparison.OrdinalIgnoreCase) ||
-                   name.Equals("node_modules", StringComparison.OrdinalIgnoreCase) || // 前端库通常太深且无意义，建议保留
+                   name.Equals("node_modules", StringComparison.OrdinalIgnoreCase) ||
                    name.Equals("$Recycle.Bin", StringComparison.OrdinalIgnoreCase) ||
                    name.Equals("System Volume Information", StringComparison.OrdinalIgnoreCase);
         }
