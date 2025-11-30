@@ -27,7 +27,7 @@ namespace GitBranchSwitcher {
         private Panel pnlRight;
         private Label lblTargetBranch;
 
-        // [新增] 状态标识 Label
+        // 状态标识 Label
         private Label lblFetchStatus;
 
         private ComboBox cmbTargetBranch;
@@ -194,7 +194,7 @@ namespace GitBranchSwitcher {
 
             txtSearch.TextChanged += (_, __) => RefilterParentsList();
 
-            // [缓存修复] 勾选切换：允许使用缓存 (false)
+            // 勾选切换：允许使用缓存 (false)
             lbParents.ItemCheck += async (_, e) => {
                 var p = lbParents.Items[e.Index].ToString();
                 BeginInvoke(new Action(async () => {
@@ -206,7 +206,7 @@ namespace GitBranchSwitcher {
                 }));
             };
 
-            // [缓存修复] 全选：允许使用缓存 (false)
+            // 全选：允许使用缓存 (false)
             btnSelectAllParents.Click += async (_, __) => {
                 _checkedParents = new HashSet<string>(_settings.ParentPaths);
                 for (int i = 0; i < lbParents.Items.Count; i++)
@@ -359,7 +359,6 @@ namespace GitBranchSwitcher {
                 Dock = DockStyle.Fill, Padding = new Padding(10)
             };
 
-            // [UI 修改] 移除旧提示，增加 lblFetchStatus
             var rightLayout = new TableLayoutPanel {
                 Dock = DockStyle.Top, ColumnCount = 3, AutoSize = true
             };
@@ -400,7 +399,7 @@ namespace GitBranchSwitcher {
                 }
             };
 
-            // [Bug 修复] 文本更新时，确保安全更新列表
+            // 文本更新时，确保安全更新列表
             cmbTargetBranch.TextUpdate += (_, __) => {
                 try {
                     UpdateBranchDropdown();
@@ -757,7 +756,6 @@ namespace GitBranchSwitcher {
             form.ShowDialog(this);
         }
 
-        // [核心逻辑修复]
         private async Task LoadReposForCheckedParentsAsync(bool forceRescan = false) {
             _loadCts?.Cancel();
             _loadCts = new System.Threading.CancellationTokenSource();
@@ -890,29 +888,42 @@ namespace GitBranchSwitcher {
                     // 1. 刷新本地分支
                     RefreshBranchesAsync();
 
-                    // 2. [新增] 启动后台自动 Fetch 任务
+                    // 2. 启动优化后的后台 Fetch
                     _ = AutoFetchAndRefreshAsync(token);
                 }));
             });
         }
 
-        // [新增] 自动 Fetch 并在完成后再次刷新分支列表
+        // [优化修复] 智能识别主仓库进行 Fetch，解决子仓库过多导致的卡顿
         private async Task AutoFetchAndRefreshAsync(System.Threading.CancellationToken token) {
             try {
-                var paths = new List<string>();
-                foreach (ListViewItem item in lvRepos.Items)
-                    if (item.Tag is GitRepo r)
-                        paths.Add(r.Path);
-                if (paths.Count == 0)
+                var allPaths = new List<string>();
+                var rootPaths = new List<string>();
+
+                // 分类收集路径
+                foreach (ListViewItem item in lvRepos.Items) {
+                    if (item.Tag is GitRepo r) {
+                        allPaths.Add(r.Path);
+                        // 识别是否是主仓库 (Name == "Root")
+                        if (r.Name == "Root")
+                            rootPaths.Add(r.Path);
+                    }
+                }
+
+                if (allPaths.Count == 0)
                     return;
 
-                lblFetchStatus.Text = "📡 正在同步远程分支...";
+                // 策略：如果有 "Root" 仓库，只 Fetch Root (通常是主工程)，忽略所有子插件
+                // 如果没有 "Root" (即父目录本身不是Git，全是子Git)，则 Fetch 所有
+                var targetPaths = rootPaths.Count > 0? rootPaths : allPaths;
+
+                lblFetchStatus.Text = rootPaths.Count > 0? $"📡 正在同步 {targetPaths.Count} 个主仓库..." : $"📡 正在同步 {targetPaths.Count} 个仓库...";
 
                 await Task.Run(() => {
                     var opts = new ParallelOptions {
                         MaxDegreeOfParallelism = 8
                     };
-                    Parallel.ForEach(paths, opts, (path) => {
+                    Parallel.ForEach(targetPaths, opts, (path) => {
                         if (token.IsCancellationRequested)
                             return;
                         GitHelper.FetchFast(path);
@@ -961,12 +972,10 @@ namespace GitBranchSwitcher {
                 _settings.Save();
             }
 
-            // 刷新时不强制清空，尝试保留当前输入
             if (cmbTargetBranch != null && !cmbTargetBranch.IsDisposed)
                 UpdateBranchDropdown();
         }
 
-        // [Bug 修复] 下拉框更新逻辑优化
         private void UpdateBranchDropdown() {
             try {
                 if (cmbTargetBranch == null || cmbTargetBranch.IsDisposed)
@@ -985,7 +994,6 @@ namespace GitBranchSwitcher {
 
                 cmbTargetBranch.EndUpdate();
 
-                // 恢复光标与文本
                 cmbTargetBranch.Text = currentText;
                 if (!string.IsNullOrEmpty(currentText)) {
                     cmbTargetBranch.SelectionStart = currentText.Length;
