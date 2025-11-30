@@ -83,6 +83,9 @@ namespace GitBranchSwitcher {
 
             // 启动时允许读取缓存 (false)
             _ = LoadReposForCheckedParentsAsync(false);
+            
+            // [修改] 使用 UpdateSourcePath
+            _ = UpdateService.CheckAndUpdateAsync(_settings.UpdateSourcePath);
         }
 
         private async Task InitMyStatsAsync() {
