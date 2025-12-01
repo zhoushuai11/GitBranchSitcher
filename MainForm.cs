@@ -302,19 +302,42 @@ namespace GitBranchSwitcher {
 
                 var item = lvRepos.SelectedItems[0];
                 var r = (GitRepo)item.Tag;
-                if (MessageBox.Show($"确定对 [{r.Name}] 进行瘦身吗？", "确认", MessageBoxButtons.YesNo) != DialogResult.Yes)
+
+                // 提示语微调
+                string mode = aggressive? "深度瘦身 (极慢)" : "快速瘦身";
+                if (MessageBox.Show($"确定对 [{r.Name}] 进行 {mode} 吗？\n这可能会花费一些时间。", "确认", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
                     return;
+
                 item.Text = "🧹 清理中...";
-                await Task.Run(() => {
+
+                await Task.Run(async () => {
+                    // 1. 执行瘦身 (这里会自动使用 GitHelper 里的新逻辑)
                     var res = GitHelper.GarbageCollect(r.Path, aggressive);
+
+                    // 2. [新增] 上报战绩到排行榜
+                    // 只有成功且清理出空间 (res.bytesSaved > 0) 才上报
+                    if (res.ok && res.bytesSaved > 0) {
+#if !BOSS_MODE
+                        if (!string.IsNullOrEmpty(_settings.LeaderboardPath)) {
+                            // 只上报空间，次数和时长填 0
+                            var stats = await LeaderboardService.UploadMyScoreAsync(0, res.bytesSaved);
+                            // 刷新底部状态栏
+                            BeginInvoke((Action)(() => UpdateStatsUi(stats.totalCount, stats.totalTime, stats.totalSpace)));
+                        }
+#endif
+                    }
+
                     BeginInvoke((Action)(() => {
                         item.Text = res.ok? $"✅ {res.sizeInfo}" : "❌ 失败";
-                        if (res.ok)
-                            MessageBox.Show(res.sizeInfo);
+                        if (res.ok) {
+                            // 弹窗反馈结果
+                            MessageBox.Show($"清理完成！\n\n结果: {res.sizeInfo}\n(已计入排行榜)", "瘦身成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        } else {
+                            MessageBox.Show($"瘦身失败:\n{res.log}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        }
                     }));
                 });
             }
-
             itemGcFast.Click += (_, __) => PerformGc(false);
             itemGcDeep.Click += (_, __) => PerformGc(true);
             lvRepos.ContextMenuStrip = listMenu;

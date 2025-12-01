@@ -186,23 +186,28 @@ namespace GitBranchSwitcher
 
             return (true, log.AppendLine($"OK").ToString());
         }
-
-        public static (bool ok, string log, string sizeInfo, long bytesSaved) GarbageCollect(string repoPath, bool aggressive)
+public static (bool ok, string log, string sizeInfo, long bytesSaved) GarbageCollect(string repoPath, bool aggressive)
         {
             var log = new StringBuilder();
             void Step(string s) => log.AppendLine(s);
 
             string gitDir = Path.Combine(repoPath, ".git");
             long sizeBefore = GetDirectorySize(gitDir);
-            Step($"初始大小: {FormatSize(sizeBefore)}"); 
+            Step($"初始大小: {FormatSize(sizeBefore)}");
+
+            // [新增] 1. 强力清理 Reflog
+            // 这是瘦身的关键！不清理 reflog，很多"悬空"对象会被视为"活跃"而保留。
+            Step("> Expire reflog (强制清理操作记录)...");
+            RunGit(repoPath, "reflog expire --expire=now --all", 30_000);
 
             Step("> Prune remote origin...");
             RunGit(repoPath, "remote prune origin", 60_000);
 
             string args;
             if (aggressive) {
-                Step("> 🚀 深度清理 (--aggressive)... (无限等待)");
-                args = "gc --prune=now --aggressive";
+                // [修改] 增加 window 和 depth 参数，尝试获得更好的压缩比
+                Step("> 🚀 深度清理 (--aggressive --window=50)... (极慢)");
+                args = "gc --prune=now --aggressive --window=50";
             } else {
                 Step("> 🧹 快速清理...");
                 args = "gc --prune=now";
@@ -215,29 +220,50 @@ namespace GitBranchSwitcher
 
             long sizeAfter = GetDirectorySize(gitDir);
             long saved = sizeBefore - sizeAfter;
-            if (saved < 0) saved = 0;
 
-            string resultMsg = $"{FormatSize(saved)} ({FormatSize(sizeBefore)} -> {FormatSize(sizeAfter)})";
-            log.AppendLine($"✅ 完成！ 瘦身: {resultMsg}");
+            // [修改] 诚实反馈：如果变大了，显示负数
+            // 不要再写 if (saved < 0) saved = 0; 
+            
+            string resultMsg;
+            if (saved >= 0)
+            {
+                resultMsg = $"{FormatSize(saved)} ({FormatSize(sizeBefore)} -> {FormatSize(sizeAfter)})";
+                log.AppendLine($"✅ 完成！ 瘦身: {resultMsg}");
+            }
+            else
+            {
+                // 变多了通常是因为打包了松散对象但旧文件因占用未删除，或者索引膨胀
+                resultMsg = $"⚠️ 膨胀 {FormatSize(-saved)} ({FormatSize(sizeBefore)} -> {FormatSize(sizeAfter)})";
+                log.AppendLine($"✅ 完成，但体积增加了。可能原因：\n1. Unity/IDE 占用了文件，导致旧 pack 没删掉。\n2. 松散对象被打包产生了额外的索引文件。");
+            }
 
-            return (true, log.ToString(), FormatSize(saved), saved);
+            return (true, log.ToString(), resultMsg, saved);
         }
 
         private static long GetDirectorySize(string path) { try { if (!Directory.Exists(path)) return 0; return new DirectoryInfo(path).EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length); } catch { return 0; } }
 
+        // [修改] 支持负数显示
         private static string FormatSize(long bytes)
         {
-            if (bytes <= 0) return "0B";
-            if (bytes < 1024) return $"{bytes}B";
-            long gb = bytes / (1024 * 1024 * 1024);
-            long rem = bytes % (1024 * 1024 * 1024);
+            if (bytes == 0) return "0B";
+            
+            string prefix = bytes < 0 ? "-" : "";
+            long absBytes = Math.Abs(bytes);
+
+            if (absBytes < 1024) return $"{prefix}{absBytes}B";
+
+            long gb = absBytes / (1024 * 1024 * 1024);
+            long rem = absBytes % (1024 * 1024 * 1024);
             long mb = rem / (1024 * 1024);
             rem = rem % (1024 * 1024);
             long kb = rem / 1024;
+
             var sb = new StringBuilder();
+            sb.Append(prefix);
             if (gb > 0) sb.Append($"{gb}GB ");
             if (mb > 0) sb.Append($"{mb}MB ");
             if (kb > 0) sb.Append($"{kb}KB");
+            
             return sb.ToString().Trim();
         }
 

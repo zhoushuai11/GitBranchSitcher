@@ -6,24 +6,29 @@
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
 
-        <!--    <DefineConstants>BOSS_MODE</DefineConstants>-->
         <ApplicationIcon>AppIcon.ico</ApplicationIcon>
+
     </PropertyGroup>
 
     <PropertyGroup>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
-    </PropertyGroup>
+        <AssemblyVersion>1.0.3.0</AssemblyVersion>
+        <FileVersion>1.0.3.0</FileVersion>
 
-    <ItemGroup>
-        <EmbeddedResource Include="Assets\**\*"/>
-    </ItemGroup>
-    <PropertyGroup>
+        <ReleaseNote>
+            1. 修复瘦身问题，单个仓库瘦身加入排行榜。
+            2. 优化了自动更新逻辑。
+            3. 回归手动版本管理模式，发布更可控。
+        </ReleaseNote>
+
         <DeployRootPath>H:\GitFleetManagerProjectRoot\GitRankData</DeployRootPath>
     </PropertyGroup>
 
+    <ItemGroup>
+        <EmbeddedResource Include="Assets\**\*" />
+    </ItemGroup>
+
     <Target Name="AutoDeployAfterPublish" AfterTargets="Publish">
-        <Message Text=">>> 开始自动化部署到共享目录..." Importance="high" />
+        <Message Text=">>> 🚀 开始自动化部署到共享目录..." Importance="high" />
 
         <MakeDir Directories="$(DeployRootPath)\Version" />
         <MakeDir Directories="$(DeployRootPath)\Exe" />
@@ -35,13 +40,19 @@
                 Encoding="UTF-8" />
         <Message Text=">>> [Version] 已更新为: $(AssemblyVersion)" Importance="high" />
 
+        <WriteLinesToFile
+                File="$(DeployRootPath)\Version\release_note.txt"
+                Lines="$(ReleaseNote)"
+                Overwrite="true"
+                Encoding="UTF-8" />
+        <Message Text=">>> [Note] 更新公告已写入 release_note.txt" Importance="high" />
+
         <Copy SourceFiles="$(PublishDir)$(AssemblyName).exe"
               DestinationFolder="$(DeployRootPath)\Exe"
               OverwriteReadOnlyFiles="true" />
         <Message Text=">>> [Exe] 已复制到: $(DeployRootPath)\Exe" Importance="high" />
 
-        <Touch Files="$(DeployRootPath)\Version\release_note.txt" AlwaysCreate="false" />
-
-        <Message Text=">>> ✅ 自动化部署完成！" Importance="high" />
+        <Message Text=">>> ✅ 自动化部署完成！版本: $(AssemblyVersion)" Importance="high" />
     </Target>
+
 </Project>
