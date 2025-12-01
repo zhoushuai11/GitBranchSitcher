@@ -10,52 +10,66 @@ namespace GitBranchSwitcher
 {
     public static class UpdateService
     {
-        /// <summary>
-        /// 检查更新
-        /// </summary>
-        /// <param name="updateDir">包含最新 GitBranchSwitcher.exe 的共享目录路径</param>
-        public static async Task CheckAndUpdateAsync(string updateDir)
+        // [修改] 增加 Form owner 参数，用于安全的 UI 回调
+        public static async Task CheckAndUpdateAsync(string updateRootPath, Form owner)
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(updateDir) || !Directory.Exists(updateDir)) return;
+                if (string.IsNullOrWhiteSpace(updateRootPath) || !Directory.Exists(updateRootPath)) return;
 
-                // 直接拼接 EXE 路径
-                string remoteExePath = Path.Combine(updateDir, "GitBranchSwitcher.exe");
+                string versionDir = Path.Combine(updateRootPath, "Version");
+                string exeDir = Path.Combine(updateRootPath, "Exe");
 
-                if (!File.Exists(remoteExePath)) return;
+                string versionFilePath = Path.Combine(versionDir, "version.txt");
+                string remoteExePath = Path.Combine(exeDir, "GitBranchSwitcher.exe");
 
-                // 3. 比较版本号 (逻辑保持不变)
+                if (!File.Exists(versionFilePath) || !File.Exists(remoteExePath)) return;
+
                 await Task.Run(() =>
                 {
-                    var currentVer = Assembly.GetExecutingAssembly().GetName().Version;
-                    var remoteInfo = FileVersionInfo.GetVersionInfo(remoteExePath);
-                    
-                    if (string.IsNullOrEmpty(remoteInfo.FileVersion)) return;
-                    
-                    var remoteVer = new Version(remoteInfo.FileVersion);
-
-                    if (remoteVer > currentVer)
+                    try
                     {
-                        Application.OpenForms[0]?.BeginInvoke((Action)(() =>
+                        string verStr = File.ReadAllText(versionFilePath).Trim();
+                        if (!Version.TryParse(verStr, out Version? remoteVer) || remoteVer == null) return;
+
+                        var localVer = Assembly.GetExecutingAssembly().GetName().Version;
+
+                        // 只有 远程 > 本地 时才触发
+                        if (remoteVer > localVer)
                         {
-                            if (MessageBox.Show(
-                                    $"发现新版本 v{remoteVer} (当前 v{currentVer})！\n\n是否立即更新并重启？", 
-                                    "自动更新", 
-                                    MessageBoxButtons.YesNo, 
-                                    MessageBoxIcon.Information) == DialogResult.Yes)
+                            string notePath = Path.Combine(versionDir, "release_note.txt");
+                            string notes = "（本次更新包含若干性能优化与修复）";
+                            if (File.Exists(notePath))
                             {
-                                PerformUpdate(remoteExePath);
+                                try { notes = File.ReadAllText(notePath, Encoding.UTF8); } catch { }
                             }
-                        }));
+
+                            // [修改] 使用传入的 owner 进行 Invoke
+                            if (owner != null && !owner.IsDisposed && owner.IsHandleCreated)
+                            {
+                                owner.BeginInvoke((Action)(() =>
+                                {
+                                    MessageBox.Show(
+                                        $"🎉 发现新版本 v{remoteVer} (当前 v{localVer})\n\n【更新公告】\n{notes}\n\n点击“确定”后将自动重启更新。", 
+                                        "自动更新", 
+                                        MessageBoxButtons.OK, 
+                                        MessageBoxIcon.Information);
+
+                                    PerformUpdate(remoteExePath);
+                                }));
+                            }
+                        }
+                    }
+                    catch (Exception ex) 
+                    { 
+                        // 调试用：如果不想吞掉错误，可以用 Debug.WriteLine
+                        Debug.WriteLine(ex.ToString());
                     }
                 });
             }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Update check failed: {ex.Message}");
-            }
+            catch { }
         }
+
         private static void PerformUpdate(string remoteExePath)
         {
             string currentExe = Process.GetCurrentProcess().MainModule?.FileName ?? "";
@@ -63,14 +77,7 @@ namespace GitBranchSwitcher
 
             string appDir = AppDomain.CurrentDomain.BaseDirectory;
             string batchPath = Path.Combine(appDir, "update_script.bat");
-            string pid = Process.GetCurrentProcess().Id.ToString();
-
-            // 生成更新脚本
-            // 逻辑：
-            // 1. 等待当前进程退出 (timeout /t 1)
-            // 2. 复制远程文件覆盖本地 (copy /y)
-            // 3. 重新启动程序 (start)
-            // 4. 删除脚本自己 (del)
+            
             var batContent = new StringBuilder();
             batContent.AppendLine("@echo off");
             batContent.AppendLine("timeout /t 1 /nobreak > nul"); 
@@ -80,7 +87,6 @@ namespace GitBranchSwitcher
 
             File.WriteAllText(batchPath, batContent.ToString(), Encoding.Default);
 
-            // 启动脚本
             var psi = new ProcessStartInfo
             {
                 FileName = batchPath,
@@ -88,9 +94,8 @@ namespace GitBranchSwitcher
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden
             };
+            
             Process.Start(psi);
-
-            // 退出当前程序
             Application.Exit();
         }
     }

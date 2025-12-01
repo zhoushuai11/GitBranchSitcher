@@ -83,9 +83,15 @@ namespace GitBranchSwitcher {
 
             // 启动时允许读取缓存 (false)
             _ = LoadReposForCheckedParentsAsync(false);
-            
-            // [修改] 使用 UpdateSourcePath
-            _ = UpdateService.CheckAndUpdateAsync(_settings.UpdateSourcePath);
+        }
+        
+        // [新增/重写] OnShown 方法
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+
+            // 窗口显示后再检查更新，传入 'this'
+            _ = UpdateService.CheckAndUpdateAsync(_settings.UpdateSourcePath, this);
         }
 
         private async Task InitMyStatsAsync() {
@@ -96,14 +102,18 @@ namespace GitBranchSwitcher {
         }
 
         private void InitializeComponent() {
+            // 获取当前版本号
+            var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            string vStr = $"{version.Major}.{version.Minor}.{version.Build}"; // 例如 1.0.2
+
 #if BOSS_MODE
-            Text = "Git 分支管理工具 (Enterprise)";
+    Text = $"Git 分支管理工具 (Enterprise) - v{vStr}";
 #else
-            Text = "Unity 项目切线工具 (Slim King)";
+            // [修改点] 标题增加版本号
+            Text = $"Unity 项目切线工具 (Slim King) - v{vStr}";
 #endif
-            Width = 1400;
-            Height = 900;
-            StartPosition = FormStartPosition.CenterScreen;
+    
+            Width = 1400; Height = 900; StartPosition = FormStartPosition.CenterScreen;
         }
 
         private void InitUi() {

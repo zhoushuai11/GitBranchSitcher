@@ -11,11 +11,37 @@
     </PropertyGroup>
 
     <PropertyGroup>
-        <AssemblyVersion>1.0.1.0</AssemblyVersion>
-        <FileVersion>1.0.1.0</FileVersion>
+        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <FileVersion>1.0.0.0</FileVersion>
     </PropertyGroup>
 
     <ItemGroup>
         <EmbeddedResource Include="Assets\**\*"/>
     </ItemGroup>
+    <PropertyGroup>
+        <DeployRootPath>H:\GitFleetManagerProjectRoot\GitRankData</DeployRootPath>
+    </PropertyGroup>
+
+    <Target Name="AutoDeployAfterPublish" AfterTargets="Publish">
+        <Message Text=">>> 开始自动化部署到共享目录..." Importance="high" />
+
+        <MakeDir Directories="$(DeployRootPath)\Version" />
+        <MakeDir Directories="$(DeployRootPath)\Exe" />
+
+        <WriteLinesToFile
+                File="$(DeployRootPath)\Version\version.txt"
+                Lines="$(AssemblyVersion)"
+                Overwrite="true"
+                Encoding="UTF-8" />
+        <Message Text=">>> [Version] 已更新为: $(AssemblyVersion)" Importance="high" />
+
+        <Copy SourceFiles="$(PublishDir)$(AssemblyName).exe"
+              DestinationFolder="$(DeployRootPath)\Exe"
+              OverwriteReadOnlyFiles="true" />
+        <Message Text=">>> [Exe] 已复制到: $(DeployRootPath)\Exe" Importance="high" />
+
+        <Touch Files="$(DeployRootPath)\Version\release_note.txt" AlwaysCreate="false" />
+
+        <Message Text=">>> ✅ 自动化部署完成！" Importance="high" />
+    </Target>
 </Project>

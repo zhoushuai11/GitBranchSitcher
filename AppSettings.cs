@@ -40,7 +40,7 @@ namespace GitBranchSwitcher
         public double TodayTotalSeconds { get; set; } = 0;              
         public string LeaderboardPath { get; set; } = @"\\SS-ZHOUSHUAI\GitRankData\rank.json"; 
         // 建议默认值设为你存放最新版的共享目录
-        public string UpdateSourcePath { get; set; } = @"\\SS-ZHOUSHUAI\GitRankData\";
+        public string UpdateSourcePath { get; set; } = @"\\SS-ZHOUSHUAI\GitRankData";
         private static string SettingsDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GitBranchSwitcher");
         private static string SettingsFile => Path.Combine(SettingsDir, "settings.json");
 
