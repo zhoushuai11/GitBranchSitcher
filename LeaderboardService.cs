@@ -26,60 +26,77 @@ namespace GitBranchSwitcher
 
         public static void SetPath(string path) => _sharedFilePath = path;
 
+        private static readonly Random _jitter = new Random();
+
         // [修改] 上传数据：增加 cleanedBytes 参数
         // 返回：最新累计值 (次数, 时长, 空间)
-        public static async Task<(int totalCount, double totalTime, long totalSpace)> UploadMyScoreAsync(double durationSeconds, long cleanedBytes)
-        {
-            if (string.IsNullOrEmpty(_sharedFilePath)) return (0, 0, 0);
+        public static async Task<(int totalCount, double totalTime, long totalSpace)> UploadMyScoreAsync(double durationSeconds, long cleanedBytes) {
+            if (string.IsNullOrEmpty(_sharedFilePath))
+                return (0, 0, 0);
 
-            return await Task.Run(() =>
+            return await Task.Run(async () => // 注意这里改为 async lambda 以支持 Task.Delay
             {
-                string myName = Environment.UserName; 
-                int fCount = 0; double fTime = 0; long fSpace = 0;
+                string myName = Environment.UserName;
+                int fCount = 0;
+                double fTime = 0;
+                long fSpace = 0;
 
-                for (int i = 0; i < 5; i++)
-                {
-                    try
-                    {
+                // [优化] 增加重试次数到 10 次，并使用指数退避策略
+                int maxRetries = 10;
+                for (int i = 0; i < maxRetries; i++) {
+                    try {
+                        // 尝试获取文件锁并读取
                         var data = ReadAndLock(out var fileStream);
-                        using (fileStream) 
-                        {
+                        using (fileStream) {
                             var me = data.FirstOrDefault(u => u.Name == myName);
-                            if (me == null)
-                            {
-                                me = new UserStat { Name = myName };
+                            if (me == null) {
+                                me = new UserStat {
+                                    Name = myName
+                                };
                                 data.Add(me);
                             }
-                            
-                            // 累加
+
                             if (durationSeconds > 0) {
                                 me.TotalSwitches++;
                                 me.TotalDuration += durationSeconds;
                             }
+
                             if (cleanedBytes > 0) {
                                 me.TotalSpaceCleaned += cleanedBytes;
                             }
-                            
+
                             me.LastActive = DateTime.Now;
 
-                            // 记录最新值
                             fCount = me.TotalSwitches;
                             fTime = me.TotalDuration;
                             fSpace = me.TotalSpaceCleaned;
 
+                            // 写入数据
                             fileStream.SetLength(0);
                             using var writer = new StreamWriter(fileStream);
-                            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+                            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions {
+                                WriteIndented = true
+                            });
                             writer.Write(json);
+                            // [关键] 显式 Flush 确保数据落盘
+                            writer.Flush();
                         }
-                        
-                        _cachedList = null; // 清除缓存
-                        return (fCount, fTime, fSpace); 
+
+                        _cachedList = null;
+                        return (fCount, fTime, fSpace);
+                    } catch (IOException) {
+                        // [优化] 指数退避 + 随机抖动
+                        // 第一次等待约 50-150ms，第二次 100-300ms... 第十次可能等待 1-2秒
+                        // 这种随机性极大降低了多个客户端再次碰撞的概率
+                        int baseDelay = 50 * (int)Math.Pow(2, i);
+                        int actualDelay = _jitter.Next(baseDelay, baseDelay * 3);
+                        await Task.Delay(actualDelay);
+                    } catch (Exception) {
+                        return (0, 0, 0);
                     }
-                    catch (IOException) { Thread.Sleep(200); }
-                    catch { return (0, 0, 0); }
                 }
-                return (0, 0, 0);
+
+                return (0, 0, 0); // 多次重试依然失败，静默放弃
             });
         }
 

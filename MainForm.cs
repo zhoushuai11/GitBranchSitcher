@@ -22,7 +22,7 @@ namespace GitBranchSwitcher {
         private SplitContainer splitGlobal;
         private SplitContainer splitUpper;
         private SplitContainer splitMiddle;
-        private SplitContainer splitBottom;
+        private Form consoleWindow;          // [新增] 独立的控制台窗口
         private TableLayoutPanel layoutMain; // 如果不用 SplitContainer 全局布局，备用
 
         // === 控件定义 ===
@@ -68,6 +68,8 @@ namespace GitBranchSwitcher {
         private ListViewGroup grpStaged, grpUnstaged;
         private const int TARGET_BOX = 500, FLASH_BOX = 300;
 
+        private GitWorkflowService _workflowService;
+
         private enum SwitchState {
             NotStarted,
             Switching,
@@ -99,6 +101,8 @@ namespace GitBranchSwitcher {
             }
 
             _ = LoadReposForCheckedParentsAsync(false);
+
+            _workflowService = new GitWorkflowService(_settings.MaxParallel);
         }
 
         protected override void OnShown(EventArgs e) {
@@ -111,10 +115,10 @@ namespace GitBranchSwitcher {
 
         private void ConfigureInitialLayout() {
             try {
-                splitGlobal.SplitterDistance = (int)(this.Height * 0.65);
+                // 设置左侧的分割比例
+                splitGlobal.SplitterDistance = (int)(this.Height * 0.75); // 日志区域稍微小一点
                 splitUpper.SplitterDistance = 140;
-                splitMiddle.SplitterDistance = (int)(this.Width * 0.7);
-                splitBottom.SplitterDistance = (int)(splitBottom.Height * 0.7);
+                splitMiddle.SplitterDistance = (int)(splitMiddle.Width * 0.65); // 列表占宽一点
             } catch {
             }
         }
@@ -170,9 +174,6 @@ namespace GitBranchSwitcher {
             };
             splitMiddle = new SplitContainer {
                 Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterWidth = 6
-            };
-            splitBottom = new SplitContainer {
-                Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterWidth = 6
             };
 
             // ==========================================
@@ -529,10 +530,19 @@ namespace GitBranchSwitcher {
                 flashTimer.Stop();
             };
 
-            // [控制台显隐逻辑]
+            // [修改后]
+            btnToggleConsole.Text = "💻 打开 Git 控制台";
             btnToggleConsole.Click += (_, __) => {
-                splitBottom.Panel1Collapsed = !splitBottom.Panel1Collapsed;
-                btnToggleConsole.Text = splitBottom.Panel1Collapsed? "💻 打开 Git 控制台" : "💻 关闭 Git 控制台";
+                if (consoleWindow.Visible) {
+                    consoleWindow.Hide();
+                    btnToggleConsole.Text = "💻 打开 Git 控制台";
+                } else {
+                    consoleWindow.Show(); // 显示独立窗口
+                    if (consoleWindow.WindowState == FormWindowState.Minimized) 
+                        consoleWindow.WindowState = FormWindowState.Normal;
+                    consoleWindow.Activate(); // 激活焦点
+                    btnToggleConsole.Text = "💻 关闭 Git 控制台";
+                }
             };
 
             // ==========================================
@@ -664,9 +674,27 @@ namespace GitBranchSwitcher {
                 }
             });
             lvFileChanges.ContextMenuStrip = fileMenu;
-
-            // 放入 SplitBottom 上部
-            splitBottom.Panel1.Controls.Add(grpDetails);
+            
+            // [关键修改] 初始化独立窗口，而不是放入 SplitContainer
+            consoleWindow = new Form {
+                Text = "Git 控制台 (独立视图)",
+                Width = 1000,
+                Height = 700,
+                StartPosition = FormStartPosition.CenterScreen,
+                Icon = this.Icon, // 保持图标一致
+                ShowInTaskbar = false // 可选：设为 false 让它像工具窗口；设为 true 则在任务栏有独立图标
+            };
+            // 将控制台面板放入窗口
+            consoleWindow.Controls.Add(grpDetails);
+    
+            // [重要] 拦截关闭事件：点击关闭时只是隐藏，而不是销毁
+            consoleWindow.FormClosing += (s, e) => {
+                if (e.CloseReason == CloseReason.UserClosing) {
+                    e.Cancel = true; // 阻止销毁
+                    consoleWindow.Hide(); // 只是隐藏
+                    btnToggleConsole.Text = "💻 打开 Git 控制台";
+                }
+            };
 
             // ==========================================
             // 5. 运行日志 (grpLog)
@@ -685,14 +713,17 @@ namespace GitBranchSwitcher {
             };
             grpLog.Controls.Add(txtLog);
 
-            // 放入 SplitBottom 下部
-            splitBottom.Panel2.Controls.Add(grpLog);
-
             // ==========================================
             // 全局组装
             // ==========================================
+            splitMiddle.Panel1.Controls.Add(grpList);
+            splitMiddle.Panel2.Controls.Add(grpActions);
+            splitUpper.Panel1.Controls.Add(grpTop);
+            splitUpper.Panel2.Controls.Add(splitMiddle);
+
+            // B. 组装左侧整体 (Top: splitUpper, Bottom: grpLog)
             splitGlobal.Panel1.Controls.Add(splitUpper);
-            splitGlobal.Panel2.Controls.Add(splitBottom);
+            splitGlobal.Panel2.Controls.Add(grpLog); // 日志现在占据左侧下方
 
             statusStrip = new StatusStrip();
             statusLabel = new ToolStripStatusLabel("就绪") {
@@ -712,9 +743,9 @@ namespace GitBranchSwitcher {
                 Visible = false, Style = ProgressBarStyle.Marquee, Width = 200
             };
             statusStrip.Items.Add(statusProgress);
-
-            Controls.Add(splitGlobal);
+            // 确保顺序：先加 StatusStrip (Bottom)，再加 splitGlobal (Fill)
             Controls.Add(statusStrip);
+            Controls.Add(splitGlobal);
         }
 
         // === 逻辑方法 (保持原样) ===
@@ -1202,6 +1233,10 @@ namespace GitBranchSwitcher {
             var items = lvRepos.Items.Cast<ListViewItem>().Where(i => i.Checked).ToList();
             if (!items.Any())
                 return;
+
+            var targetRepos = items.Select(i => (GitRepo)i.Tag).ToList();
+
+            // UI 准备状态
             btnSwitchAll.Enabled = false;
             statusProgress.Visible = true;
             SetSwitchState(SwitchState.Switching);
@@ -1210,45 +1245,39 @@ namespace GitBranchSwitcher {
                 i.SubItems[1].Text = "...";
             }
 
-            var batchSw = Stopwatch.StartNew();
-            foreach (var item in items) {
-                tasks.Add(Task.Run(async () => {
-                    await sem.WaitAsync();
-                    var r = (GitRepo)item.Tag;
-                    var sw = Stopwatch.StartNew();
-                    try {
-                        var res = GitHelper.SwitchAndPull(r.Path, target, _settings.StashOnSwitch, _settings.FastMode);
-                        r.SwitchOk = res.ok;
-                        r.LastMessage = res.message;
-                        r.CurrentBranch = GitHelper.GetFriendlyBranch(r.Path);
-                    } finally {
-                        sw.Stop();
-                        sem.Release();
-                    }
+            // 创建进度处理器
+            var progressHandler = new Progress<RepoSwitchResult>(result => {
+                // 这里已经在 UI 线程，直接更新控件
+                // 找到对应的 ListViewItem (可以通过 Tag 或者 字典映射优化性能，这里简单演示)
+                var item = items.FirstOrDefault(x => x.Tag == result.Repo);
+                if (item != null) {
+                    item.Text = (result.Success? "✅" : "❌") + $" {result.DurationSeconds:F1}s";
+                    item.SubItems[1].Text = result.Repo.CurrentBranch;
+                    // 确保 Log 方法线程安全（WinForms TextBox 本身需要 Invoke，但在 Progress 回调里通常安全）
+                    Log($"[{result.Repo.Name}] {result.Message?.Replace("\n", " ")}");
+                }
 
-                    BeginInvoke((Action)(() => {
-                        item.Text = (r.SwitchOk? "✅" : "❌") + $" {sw.Elapsed.TotalSeconds:F1}s";
-                        item.SubItems[1].Text = r.CurrentBranch;
-                        Log($"[{r.Name}] {r.LastMessage?.Replace("\n", " ")}");
-                        if (r.SwitchOk) {
-                            ApplyImageTo(pbFlash, "flash_success", FLASH_BOX);
-                            pbFlash.Visible = true;
-                            flashTimer.Start();
-                        }
+                statusLabel.Text = $"处理中 {result.ProgressIndex}/{result.TotalCount}";
 
-                        statusLabel.Text = $"处理中 {++done}/{items.Count}";
-                    }));
-                }));
-            }
+                if (result.Success) {
+                    // 播放闪烁动画逻辑...
+                    ApplyImageTo(pbFlash, "flash_success", FLASH_BOX);
+                    pbFlash.Visible = true;
+                    flashTimer.Start();
+                }
+            });
 
-            await Task.WhenAll(tasks);
-            batchSw.Stop();
+            // 调用服务执行业务逻辑
+            double totalSeconds = await _workflowService.SwitchReposAsync(targetRepos, target, _settings.StashOnSwitch, _settings.FastMode, progressHandler);
+
+            // 完成后的处理
 #if !BOSS_MODE && !PURE_MODE
             if (!string.IsNullOrEmpty(_settings.LeaderboardPath)) {
-                var (nc, nt, ns) = await LeaderboardService.UploadMyScoreAsync(batchSw.Elapsed.TotalSeconds, 0);
+                var (nc, nt, ns) = await LeaderboardService.UploadMyScoreAsync(totalSeconds, 0);
                 UpdateStatsUi(nc, nt, ns);
             }
 #endif
+
             SetSwitchState(SwitchState.Done);
             statusProgress.Visible = false;
             btnSwitchAll.Enabled = true;

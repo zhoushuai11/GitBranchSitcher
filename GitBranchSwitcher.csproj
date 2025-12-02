@@ -22,8 +22,9 @@
         <DefineConstants Condition="'$(IsBetaMode)'=='true'">$(DefineConstants);BETA_MODE</DefineConstants>
 
         <ReleaseNote>
-            1. 修复了批量提交功能缺失的问题。
-            2. 增加了测试版发布模式。
+            1. 优化了皮呀满意的 UI
+            2. 修复了若干已知问题
+            3. 控制台功能优化
         </ReleaseNote>
 
         <DeployRootPath>H:\GitFleetManagerProjectRoot\GitRankData</DeployRootPath>
