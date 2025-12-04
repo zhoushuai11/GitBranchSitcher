@@ -12,6 +12,9 @@ namespace GitBranchSwitcher {
         public int Outgoing { get; set; } = 0;
         public bool HasUpstream { get; set; } = true;
         public bool IsSyncChecked { get; set; } = false;
+        
+        // [新增] 本地是否有修改
+        public bool IsDirty { get; set; } = false;
 
         public GitRepo(string name, string path) {
             Name = name;

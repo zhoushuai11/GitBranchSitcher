@@ -332,7 +332,8 @@ namespace GitBranchSwitcher {
                 BorderStyle = BorderStyle.FixedSingle
             };
             lvRepos.Columns.Add("状态", 50);
-            lvRepos.Columns.Add("当前分支", 280);
+            lvRepos.Columns.Add("当前分支", 240); // [修改] 稍微调窄一点，给新列腾位置
+            lvRepos.Columns.Add("同步", 90);      // [新增] 新的一列：同步状态
             lvRepos.Columns.Add("仓库名", 180);
             lvRepos.Columns.Add("路径", 400);
             try {
@@ -769,83 +770,97 @@ namespace GitBranchSwitcher {
 
             lbParents.EndUpdate();
         }
+
         private void RenderRepoItem(ListViewItem item) {
             if (item == null || item.Tag == null)
                 return;
             var repo = (GitRepo)item.Tag;
-    
-            // 1. 准备显示文本和颜色
-            string displayBranch = repo.CurrentBranch;
-            string statusPrefix = ""; 
-            Color textColor = Color.Black;
 
-            // 默认字体（保持和其他列一致）
-            Font currentFont = item.Font; 
-            // 如果想要加粗高亮，可以使用: new Font(item.Font, FontStyle.Bold);
+            // ==========================================
+            // 1. 处理当前分支列 (索引 1)
+            // ==========================================
+            item.SubItems[1].Text = repo.CurrentBranch;
+            item.UseItemStyleForSubItems = false; // 允许子项单独着色
+
+            // 需求1：如果本地有修改，当前分支颜色变绿色
+            if (repo.IsDirty)
+                item.SubItems[1].ForeColor = Color.DarkOliveGreen;
+            else
+                item.SubItems[1].ForeColor = Color.Black;
+
+            // ==========================================
+            // 2. 处理同步状态列 (索引 2 - 假设你已经添加了这一列)
+            // ==========================================
+            string syncText = "";
+            Color syncColor = Color.Gray;
+            Font syncFont = item.Font; // 默认字体
 
             if (repo.IsSyncChecked) {
                 if (!repo.HasUpstream) {
-                    displayBranch += " (⚠️无远程)";
-                    textColor = Color.Gray;
+                    syncText = "⚠️ 无远程";
+                    syncColor = Color.Gray;
                 } else if (repo.Incoming == 0 && repo.Outgoing == 0) {
-                    // 最新：使用一种偏深的绿色，比纯亮绿更易读
-                    textColor = Color.SeaGreen; 
+                    syncText = "✔ 最新"; // 或者留空
+                    syncColor = Color.Black;
                 } else {
-                    var sb = new StringBuilder();
-            
-                    // [拉取] 红色警示
-                    if (repo.Incoming > 0) {
-                        sb.Append($"[⬇ {repo.Incoming}] ");
-                    }
-            
-                    // [推送] 蓝色提示
-                    if (repo.Outgoing > 0) {
-                        sb.Append($"[⬆ {repo.Outgoing}] ");
+                    // 需求2：有能拉取的时候变用绿色显示，需要 push 的 用红色显示
+                    var sb = new List<string>();
+
+                    // 优先判断逻辑
+                    bool hasPull = repo.Incoming > 0;
+                    bool hasPush = repo.Outgoing > 0;
+
+                    if (hasPull)
+                        sb.Add($"↓ {repo.Incoming}");
+                    if (hasPush)
+                        sb.Add($"↑ {repo.Outgoing}");
+
+                    syncText = string.Join(" ", sb);
+
+                    if (hasPush && hasPull) {
+                        // 既要拉又要推 (分叉)，显示红色警示，或者用紫色区分
+                        syncColor = Color.Red;
+                    } else if (hasPull) {
+                        syncColor = Color.Green; // 能拉取 -> 绿色
+                    } else if (hasPush) {
+                        syncColor = Color.Red; // 需要上传 -> 红色
                     }
 
-                    statusPrefix = sb.ToString();
-
-                    // 变色逻辑：只要有东西要拉，就变红（优先级高）；否则如果只有推，就变蓝
-                    if (repo.Incoming > 0)
-                        textColor = Color.Red; 
-                    else
-                        textColor = Color.Blue;
+                    // 稍微加粗一下，让箭头更明显
+                    syncFont = new Font(item.Font, FontStyle.Bold);
                 }
+            } else {
+                syncText = "...";
             }
 
-            // ==============================================================================
-            // [关键修复] 必须设置为 false，否则 SubItems[1].ForeColor 会被忽略，强制跟随第一列颜色
-            // ==============================================================================
-            item.UseItemStyleForSubItems = false;
-
-            // 设置第二列（当前分支）的文本
-            item.SubItems[1].Text = statusPrefix + displayBranch;
-    
-            // 设置第二列的颜色
-            item.SubItems[1].ForeColor = textColor;
-
-            // (可选) 如果你希望“状态”列（第一列）保持黑色，可以显式重置一下，防止它被意外影响
-            // item.SubItems[0].ForeColor = Color.Black; 
+            // 设置同步列的 文本、颜色、字体
+            item.SubItems[2].Text = syncText;
+            item.SubItems[2].ForeColor = syncColor;
+            item.SubItems[2].Font = syncFont;
         }
-
         private async Task BatchSyncStatusUpdate() {
-            if (lvRepos.Items.Count == 0)
-                return;
+            if (lvRepos.Items.Count == 0) return;
             var targetItems = new List<ListViewItem>();
-            foreach (ListViewItem i in lvRepos.Items)
-                targetItems.Add(i);
+            foreach (ListViewItem i in lvRepos.Items) targetItems.Add(i);
+    
             statusLabel.Text = "正在后台扫描同步状态...";
+    
             await Task.Run(() => {
-                var opts = new ParallelOptions {
-                    MaxDegreeOfParallelism = 10
-                };
+                var opts = new ParallelOptions { MaxDegreeOfParallelism = 10 };
                 Parallel.ForEach(targetItems, opts, (item) => {
                     var repo = (GitRepo)item.Tag;
+            
+                    // [新增] 检查本地是否有修改 (利用现有的 GetFileChanges，判断 Count > 0)
+                    // 这一步比较快，可以直接在这里做
+                    var changes = GitHelper.GetFileChanges(repo.Path);
+                    repo.IsDirty = (changes.Count > 0);
+
+                    // 检查远程同步
                     var syncResult = GitHelper.GetSyncCounts(repo.Path);
                     repo.IsSyncChecked = true;
                     if (syncResult == null) {
                         repo.HasUpstream = false;
-                        repo.Incoming = 0;
+                        repo.Incoming = 0; 
                         repo.Outgoing = 0;
                     } else {
                         repo.HasUpstream = true;
@@ -853,10 +868,7 @@ namespace GitBranchSwitcher {
                         repo.Outgoing = syncResult.Value.ahead;
                     }
 
-                    try {
-                        BeginInvoke((Action)(() => RenderRepoItem(item)));
-                    } catch {
-                    }
+                    try { BeginInvoke((Action)(() => RenderRepoItem(item))); } catch { }
                 });
             });
             BeginInvoke((Action)(() => statusLabel.Text = "就绪"));
@@ -879,6 +891,7 @@ namespace GitBranchSwitcher {
             lblRepoInfo.Text = $"📂 {repo.Name}  /  📍 {repo.CurrentBranch}";
             await Task.Run(() => {
                 var changes = GitHelper.GetFileChanges(repo.Path);
+                repo.IsDirty = (changes.Count > 0);
                 var syncResult = GitHelper.GetSyncCounts(repo.Path);
                 repo.IsSyncChecked = true;
                 if (syncResult != null) {
@@ -1067,8 +1080,10 @@ namespace GitBranchSwitcher {
                     foreach (var (name, path, parentName) in finalRepos) {
                         var r = new GitRepo(name, path);
                         string display = name == "Root"? $"[{parentName}] (根)" : $"[{parentName}] {name}";
+    
+                        // [修改] 数组中增加了第3个元素 "" (对应同步列)
                         lvRepos.Items.Add(new ListViewItem(new[] {
-                            "⏳", "—", display, path
+                            "⏳", "—", "", display, path 
                         }) {
                             Tag = r, Checked = true
                         });
@@ -1122,8 +1137,10 @@ namespace GitBranchSwitcher {
                 foreach (var item in kvp.Value) {
                     var r = new GitRepo(item.Name, item.FullPath);
                     string display = item.Name == "Root"? $"[{Path.GetFileName(kvp.Key)}] (根)" : $"[{Path.GetFileName(kvp.Key)}] {item.Name}";
+    
+                    // [修改] 数组中增加了第3个元素 "" (对应同步列)
                     lvRepos.Items.Add(new ListViewItem(new[] {
-                        "⏳", "—", display, item.FullPath
+                        "⏳", "—", "", display, item.FullPath
                     }) {
                         Tag = r, Checked = true
                     });
